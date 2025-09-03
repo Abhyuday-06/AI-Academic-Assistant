@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 import structlog
 import asyncio
+import uvicorn
 from datetime import datetime
 from app.routers import notes_router, summarizer_router
 from app.utils.config import settings
@@ -31,9 +32,8 @@ logger = structlog.get_logger()
 
 # Create FastAPI application
 app = FastAPI(
-    title="Academic Assistant API",
-    description="AI-powered academic assistant with notes parsing and summarization capabilities",
-    version="1.0.0",
+    title="AI Academic Assistant",
+    description="AI-powered academic assistant",
     docs_url="/docs",
     redoc_url="/redoc"
 )
@@ -75,8 +75,8 @@ async def health_check():
         # Check Ollama connection
         ollama_status = "healthy" if await ollama_client.health_check() else "unhealthy"
         
-        # Check OpenAI (would require API call, simplified here)
-        openai_status = "healthy"  # Simplified for demo
+        # Check OpenAI (would require API call)
+        openai_status = "healthy"  
         
         agents_status = {
             "ollama": ollama_status,
@@ -141,11 +141,10 @@ async def general_exception_handler(request, exc):
 @app.on_event("startup")
 async def startup_event():
     """Application startup event"""
-    logger.info("Starting Academic Assistant API", 
+    logger.info("Powering up AI Academic Assistant", 
                version="1.0.0",
                debug=settings.debug)
     
-    # Test Ollama connection
     try:
         ollama_healthy = await ollama_client.health_check()
         logger.info("Ollama health check", healthy=ollama_healthy)
@@ -156,7 +155,7 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     """Application shutdown event"""
-    logger.info("Shutting down Academic Assistant API")
+    logger.info("Shutting down AI Academic Assistant")
 
 
 if __name__ == "__main__":

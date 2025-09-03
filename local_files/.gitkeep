@@ -1,0 +1,2 @@
+# This file ensures the local_files directory is tracked by git
+# while the contents remain ignored via .gitignore
