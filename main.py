@@ -5,7 +5,7 @@ import structlog
 import asyncio
 import uvicorn
 from datetime import datetime
-from app.routers import notes_router, summarizer_router
+from app.routers import academic_router
 from app.utils.config import settings
 from app.utils.ollama_client import ollama_client
 from app.models import HealthCheckResponse, ErrorResponse
@@ -47,9 +47,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(notes_router.router)
-app.include_router(summarizer_router.router)
+# Include unified router
+app.include_router(academic_router.router)
 
 
 @app.get("/", response_model=dict)
@@ -60,8 +59,14 @@ async def root():
         "version": "1.0.0",
         "description": "AI-powered academic assistant with notes parsing and summarization",
         "endpoints": {
-            "notes_parser": "/notes/parse",
-            "summarizer": "/summarize/",
+            "parse_text": "/parse",
+            "parse_file": "/parse-file", 
+            "summarize_text": "/summarize",
+            "summarize_file": "/summarize-file",
+            "export_parse_pdf": "/parse/export-pdf",
+            "export_parse_file_pdf": "/parse-file/export-pdf",
+            "export_summary_pdf": "/summarize/export-pdf", 
+            "export_summary_file_pdf": "/summarize-file/export-pdf",
             "health": "/health",
             "docs": "/docs"
         }
@@ -81,8 +86,7 @@ async def health_check():
         agents_status = {
             "ollama": ollama_status,
             "openai": openai_status,
-            "notes_parser": "healthy",
-            "summarizer": "healthy"
+            "academic_agent": "healthy"
         }
         
         overall_status = "healthy" if all(status == "healthy" for status in agents_status.values()) else "degraded"

@@ -1,4 +1,4 @@
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Dict, Any
 from enum import Enum
 import re
@@ -24,7 +24,7 @@ class NotesParseRequest(BaseModel):
     extract_concepts: bool = Field(default=True, description="Whether to extract concepts")
     extract_questions: bool = Field(default=False, description="Whether to generate study questions")
     
-    @validator('content')
+    @field_validator('content')
     def validate_content(cls, v):
         if not v.strip():
             raise ValueError('Content cannot be empty or only whitespace')
@@ -39,13 +39,13 @@ class SummarizeRequest(BaseModel):
     focus_areas: Optional[List[str]] = Field(default=None, description="Specific areas to focus on")
     include_examples: bool = Field(default=False, description="Whether to include examples in summary")
     
-    @validator('content')
+    @field_validator('content')
     def validate_content(cls, v):
         if not v.strip():
             raise ValueError('Content cannot be empty or only whitespace')
         return v.strip()
     
-    @validator('summary_type')
+    @field_validator('summary_type')
     def validate_summary_type(cls, v):
         allowed_types = ["bullet_points", "comprehensive", "abstract", "key_points"]
         if v not in allowed_types:

@@ -28,6 +28,10 @@ Pillow>=9.1.0,<11.0.0  # Image processing
 python-magic-bin>=0.4.0,<1.0.0  # For Windows file type detection
 opencv-python>=4.8.0,<5.0.0  # Advanced image preprocessing for better OCR
 
+# PDF Generation
+reportlab>=4.0.0,<5.0.0  # PDF generation
+markdown>=3.4.0,<4.0.0  # Markdown processing for better formatting
+
 # Environment management
 python-dotenv>=1.0.0,<2.0.0
 
