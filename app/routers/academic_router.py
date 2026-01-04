@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from fastapi.responses import JSONResponse, Response
 from typing import Optional, List
 import asyncio
@@ -7,8 +7,12 @@ import re
 import os
 import tempfile
 import numpy as np
-from app.models import NotesParseRequest, NotesParseResponse, SummarizeRequest, SummaryResponse
+from app.models import (
+    NotesParseRequest, NotesParseResponse, SummarizeRequest, SummaryResponse,
+    QuestionGenerationRequest, QuestionGenerationResponse, TestType, GeneratedQuestionPaper
+)
 from app.agents.academic_agent import academic_agent
+from app.agents.question_generator import question_generator
 from app.utils.config import settings
 from app.utils.pdf_exporter import pdf_exporter
 
@@ -253,246 +257,250 @@ async def _extract_text_from_file(file_path: str, filename: str) -> str:
         raise Exception(f"Unsupported file format: {file_ext}")
 
 
-# PARSING ENDPOINTS
+from pydantic import BaseModel
+from typing import Dict, Any
 
-@router.post("/parse", response_model=NotesParseResponse)
-async def parse_content(request: NotesParseRequest):
-    """
-    Parse and summarize academic content using unified Ollama Mistral 7B processing.
-    
-    This endpoint combines parsing and summarizing functionality:
-    - Extracts keywords, concepts, and questions as requested
-    - Generates a comprehensive summary of the content
-    - Returns structured information with summarized content
-    """
-    try:
-        if not request.content or not request.content.strip():
-            raise HTTPException(status_code=400, detail="Content cannot be empty.")
-            
-        if len(request.content) > settings.max_content_length:
-            raise HTTPException(status_code=413, detail=f"Content length exceeds maximum of {settings.max_content_length} chars.")
-            
-        # Use the unified agent that combines parsing and summarizing
-        result = await academic_agent.parse_and_summarize(request)
-        logger.info(f"Successfully processed content: {len(request.content)} chars.")
-        return result
-    except Exception as e:
-        logger.error("Content parsing and summarization failed.", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+# --- Request Models ---
+
+class PDFExportRequest(BaseModel):
+    export_type: str  # "summary" or "question-paper"
+    data: Dict[str, Any]
+    filename: Optional[str] = None
 
 
-@router.post("/parse-file", response_model=NotesParseResponse)
-async def parse_file(
-    file: UploadFile = File(...),
-    extract_keywords: bool = True,
-    extract_concepts: bool = True,
-    extract_questions: bool = False
+# --- Main Endpoints ---
+
+@router.post("/generate-summary", response_model=NotesParseResponse)
+async def generate_summary(
+    file: UploadFile = File(None, description="Academic file (PDF, DOCX, PPTX, TXT)"),
+    text: str = Form(None, description="Raw text content"),
+    extract_keywords: bool = Form(True),
+    extract_concepts: bool = Form(True),
+    extract_questions: bool = Form(False)
 ):
     """
-    Parse and summarize uploaded academic files with enhanced OCR support.
+    **Main Endpoint for Note Parsing & Summarization**
     
-    Supported formats: PDF (text & scanned), DOCX, PPTX, TXT
-    
-    This endpoint:
-    - Extracts text from various file formats
-    - Uses advanced OCR for scanned documents
-    - Parses content to extract structured information
-    - Generates a comprehensive summary using Ollama Mistral 7B
+    Accepts either a file upload OR raw text.
+    Performs:
+    - Text extraction (OCR for scanned PDFs)
+    - Intelligent summarization
+    - Keyword & Concept extraction
     """
-    if not file.filename:
-        raise HTTPException(status_code=400, detail="No file provided.")
-
-    file_ext = file.filename.lower().split('.')[-1]
-    allowed_extensions = ['pdf', 'docx', 'pptx', 'txt']
-    if file_ext not in allowed_extensions:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}")
-
-    # Save to temporary file
-    with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
-        content = await file.read()
-        if len(content) > settings.MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail=f"File too large. Max size: {settings.max_file_size_mb}MB")
-        temp_file.write(content)
-        temp_path = temp_file.name
-
     try:
-        # Extract text from file
-        text_content = await _extract_text_from_file(temp_path, file.filename)
+        content = ""
+        filename = "content"
 
-        if not text_content or not _is_plausible_text(text_content):
-            raise HTTPException(status_code=422, detail="Could not extract meaningful content from the file.")
+        # 1. Handle File Upload
+        if file:
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No file provided.")
+            
+            filename = file.filename
+            file_ext = filename.lower().split('.')[-1]
+            allowed_extensions = ['pdf', 'docx', 'pptx', 'txt']
+            
+            if file_ext not in allowed_extensions:
+                raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}")
 
-        # Truncate if necessary
-        if len(text_content) > settings.max_content_length:
-            text_content = text_content[:settings.max_content_length]
-            logger.warning(f"Content truncated to {settings.max_content_length} characters.")
+            # Save to temp file
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
+                file_content = await file.read()
+                if len(file_content) > settings.MAX_FILE_SIZE:
+                    raise HTTPException(status_code=413, detail=f"File too large. Max size: {settings.max_file_size_mb}MB")
+                temp_file.write(file_content)
+                temp_path = temp_file.name
 
-        # Debug output
-        logger.info("=== EXTRACTED TEXT ===")
-        print(f"\nExtracted {len(text_content)} characters from {file.filename}")
-        print("="*80)
+            try:
+                content = await _extract_text_from_file(temp_path, filename)
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
-        # Process with unified agent
-        parse_request = NotesParseRequest(
-            content=text_content,
+        # 2. Handle Raw Text
+        elif text:
+            content = text.strip()
+        
+        else:
+            raise HTTPException(status_code=400, detail="Either 'file' or 'text' must be provided.")
+
+        # 3. Validate Content
+        if not content or len(content) < 10:
+            raise HTTPException(status_code=422, detail="Could not extract meaningful content.")
+
+        if len(content) > settings.max_content_length:
+            content = content[:settings.max_content_length]
+            logger.warning(f"Content truncated to {settings.max_content_length} chars.")
+
+        # 4. Process with AI Agent
+        request = NotesParseRequest(
+            content=content,
             extract_keywords=extract_keywords,
             extract_concepts=extract_concepts,
             extract_questions=extract_questions
         )
-        result = await academic_agent.parse_and_summarize(parse_request)
         
-        logger.info(f"Successfully processed {file.filename}")
+        result = await academic_agent.parse_and_summarize(request)
+        logger.info(f"Successfully processed summary for {filename}")
         return result
 
-    except Exception as e:
-        logger.error("File parsing failed.", filename=file.filename, error=str(e))
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
-    finally:
-        if 'temp_path' in locals() and os.path.exists(temp_path):
-            os.unlink(temp_path)
-
-
-# SUMMARIZATION ENDPOINTS
-
-@router.post("/summarize", response_model=SummaryResponse)
-async def summarize_content(request: SummarizeRequest):
-    """
-    Summarize academic content using Ollama Mistral 7B.
-    
-    This endpoint provides flexible summarization with various options:
-    - Multiple summary types: comprehensive, bullet_points, abstract
-    - Customizable length and focus areas
-    - Optimized for academic content
-    """
-    try:
-        if len(request.content) > settings.max_content_length:
-            raise HTTPException(
-                status_code=413,
-                detail=f"Content too long. Maximum {settings.max_content_length} characters allowed"
-            )
-        
-        result = await academic_agent.summarize_only(request)
-        logger.info(f"Successfully summarized text: {len(request.content)} characters")
-        return result
-        
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Text summarization failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
+        logger.error(f"Summary generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
 
 
-@router.post("/summarize-file", response_model=SummaryResponse)
-async def summarize_file(
-    file: UploadFile = File(...),
-    summary_type: str = "comprehensive",
-    max_length: int = 500,
-    focus_areas: Optional[List[str]] = None
+@router.get("/question-generation-options")
+async def get_question_generation_options():
+    """Get available options for the question generation form (Test Types, Modules)."""
+    return {
+        "test_types": [
+            {"value": "CAT-1", "label": "CAT-1 (5 Questions, 50 Marks)"},
+            {"value": "CAT-2", "label": "CAT-2 (5 Questions, 50 Marks)"},
+            {"value": "FAT", "label": "FAT (10 Questions, 100 Marks)"}
+        ],
+        "modules": [
+            {"value": f"Module {i}", "label": f"Module {i}"} 
+            for i in range(1, 11)
+        ],
+        "default_modules": {
+            "CAT-1": ["Module 1", "Module 2", "Module 3"],
+            "CAT-2": ["Module 1", "Module 2", "Module 3"], 
+            "FAT": [f"Module {i}" for i in range(1, 11)]
+        }
+    }
+
+
+@router.post("/generate-question-paper", response_model=QuestionGenerationResponse)
+async def generate_question_paper(
+    file: UploadFile = File(None, description="Syllabus file (PDF, DOCX, PPTX, TXT)"),
+    syllabus_text: str = Form(None, description="Raw syllabus text"),
+    test_type: str = Form(..., description="CAT-1, CAT-2, or FAT"),
+    modules: str = Form(..., description="Comma-separated modules (e.g., 'Module 1,Module 2')")
 ):
     """
-    Summarize content from uploaded academic files using Ollama Mistral 7B.
+    **Main Endpoint for Question Paper Generation**
     
-    Supported formats: PDF (text & scanned), DOCX, PPTX, TXT
-    Enhanced OCR support for handwritten/scanned academic content
+    Accepts syllabus (File or Text) and generates a structured exam paper.
+    Strictly follows the selected modules.
     """
     try:
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
-        
-        # Check file size
-        file_content = await file.read()
-        if len(file_content) > settings.MAX_FILE_SIZE:
-            raise HTTPException(
-                status_code=413, 
-                detail=f"File too large. Maximum size: {settings.MAX_FILE_SIZE / (1024*1024):.1f}MB"
-            )
-        
-        # Validate file extension
-        allowed_extensions = ['pdf', 'docx', 'pptx', 'txt', 'md']
-        file_ext = file.filename.lower().split('.')[-1]
-        if file_ext not in allowed_extensions:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}"
-            )
-        
-        # Save file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
-            temp_file.write(file_content)
-            temp_path = temp_file.name
-        
-        try:
-            # Extract text from file
-            if file_ext in ['txt', 'md']:
-                text_content = file_content.decode('utf-8')
-            else:
-                text_content = await _extract_text_from_file(temp_path, file.filename)
+        syllabus_content = ""
+
+        # 1. Handle File
+        if file:
+            if not file.filename:
+                raise HTTPException(status_code=400, detail="No file provided.")
             
-            if not text_content or len(text_content.strip()) < 10:
-                raise HTTPException(
-                    status_code=422,
-                    detail="No meaningful text could be extracted from the file"
-                )
-            
-            # Validate content length
-            if len(text_content) > settings.max_content_length:
-                text_content = text_content[:settings.max_content_length]
-                logger.warning(f"Content truncated to {settings.max_content_length} characters")
-            
-            # Create summarization request
-            request = SummarizeRequest(
-                content=text_content,
-                summary_type=summary_type,
-                max_length=max_length,
-                focus_areas=focus_areas or []
-            )
-            
-            # Process with agent
-            result = await academic_agent.summarize_only(request)
-            
-            logger.info(f"Successfully summarized {file.filename}: {len(text_content)} chars")
-            return result
-            
-        finally:
-            # Clean up temp file
+            file_ext = file.filename.lower().split('.')[-1]
+            allowed_extensions = ['pdf', 'docx', 'pptx', 'txt']
+            if file_ext not in allowed_extensions:
+                raise HTTPException(status_code=400, detail="Unsupported file type.")
+
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
+                file_content = await file.read()
+                temp_file.write(file_content)
+                temp_path = temp_file.name
+
             try:
-                os.unlink(temp_path)
-            except:
-                pass
-                
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"File summarization failed: {e}")
-        raise HTTPException(status_code=500, detail=f"File processing failed: {str(e)}")
+                syllabus_content = await _extract_text_from_file(temp_path, file.filename)
+            finally:
+                if os.path.exists(temp_path):
+                    os.unlink(temp_path)
 
+        # 2. Handle Text
+        elif syllabus_text:
+            syllabus_content = syllabus_text.strip()
+        
+        else:
+            raise HTTPException(status_code=400, detail="Either 'file' or 'syllabus_text' must be provided.")
 
-# PDF EXPORT ENDPOINTS
+        # 3. Validate Content
+        if not syllabus_content or len(syllabus_content) < 10:
+            raise HTTPException(status_code=422, detail="Invalid syllabus content.")
 
-@router.post("/parse/export-pdf")
-async def export_parse_results_to_pdf(request: NotesParseRequest):
-    """
-    Parse content and export results to a formatted PDF report.
-    
-    Returns a downloadable PDF containing:
-    - Summary in bullet points
-    - Extracted keywords with importance scores
-    - Identified concepts with definitions
-    - Generated study questions
-    - Processing metadata
-    """
-    try:
-        # First, get the parsing results
-        result = await academic_agent.parse_and_summarize(request)
+        # 4. Validate Parameters
+        if test_type not in ["CAT-1", "CAT-2", "FAT"]:
+            raise HTTPException(status_code=400, detail="Invalid test type.")
+        
+        modules_list = [m.strip() for m in modules.split(',') if m.strip()]
+        if not modules_list:
+            raise HTTPException(status_code=400, detail="At least one module must be selected.")
+
+        # 5. Generate Questions
+        request = QuestionGenerationRequest(
+            syllabus_text=syllabus_content,
+            test_type=TestType(test_type),
+            modules=modules_list
+        )
+        
+        result = await question_generator.generate_question_paper(request)
         
         if not result.success:
             raise HTTPException(status_code=500, detail=result.message)
-        
-        # Generate PDF
-        pdf_content = pdf_exporter.export_parse_results(result)
-        filename = pdf_exporter.generate_filename("content_analysis", "parse")
-        
-        # Return as downloadable PDF
+            
+        logger.info(f"Successfully generated {test_type} paper.")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Question generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
+
+
+@router.post("/export-pdf")
+async def export_pdf(request: PDFExportRequest):
+    """
+    **Universal PDF Export Endpoint**
+    
+    Takes the JSON result from /generate-summary or /generate-question-paper
+    and converts it into a professional PDF.
+    
+    - export_type: "summary" or "question-paper"
+    - data: The JSON response from the previous step
+    """
+    try:
+        pdf_content = None
+        filename = request.filename or "export"
+
+        if request.export_type == "summary":
+            # Reconstruct model from JSON data
+            try:
+                # Handle case where data might be wrapped or raw
+                if "parsed_content" in request.data:
+                    model = NotesParseResponse(**request.data)
+                    pdf_content = pdf_exporter.export_parse_results(model, filename)
+                    filename = pdf_exporter.generate_filename(filename, "summary")
+                else:
+                    # Fallback for simple summary response if needed
+                    model = SummaryResponse(**request.data)
+                    pdf_content = pdf_exporter.export_summary_results(model, filename)
+                    filename = pdf_exporter.generate_filename(filename, "summary")
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=f"Invalid summary data format: {str(e)}")
+
+        elif request.export_type == "question-paper":
+            try:
+                # We need the 'question_paper' part of the response
+                if "question_paper" in request.data:
+                    qp_data = request.data["question_paper"]
+                else:
+                    qp_data = request.data # Assume it's the paper object itself if not wrapped
+                
+                model = GeneratedQuestionPaper(**qp_data)
+                pdf_content = pdf_exporter.export_question_paper(model, filename)
+                filename = pdf_exporter.generate_filename(filename, "question_paper")
+            except Exception as e:
+                raise HTTPException(status_code=422, detail=f"Invalid question paper data format: {str(e)}")
+
+        else:
+            raise HTTPException(status_code=400, detail="Invalid export_type. Must be 'summary' or 'question-paper'.")
+
+        if not pdf_content:
+            raise HTTPException(status_code=500, detail="Failed to generate PDF content.")
+
         return Response(
             content=pdf_content,
             media_type="application/pdf",
@@ -501,203 +509,40 @@ async def export_parse_results_to_pdf(request: NotesParseRequest):
                 "Content-Length": str(len(pdf_content))
             }
         )
-        
+
     except HTTPException:
         raise
     except Exception as e:
         logger.error(f"PDF export failed: {e}")
-        raise HTTPException(status_code=500, detail=f"PDF export failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Export failed: {str(e)}")
 
 
-@router.post("/parse-file/export-pdf")
-async def export_parse_file_results_to_pdf(
-    file: UploadFile = File(...),
-    extract_keywords: bool = True,
-    extract_concepts: bool = True,
-    extract_questions: bool = False
-):
+@router.get("/activity")
+async def get_recent_activity():
     """
-    Parse uploaded file and export results to a formatted PDF report.
-    
-    Combines file processing with PDF generation for a complete workflow.
+    Get recent user activity (Mock Data).
     """
-    try:
-        # First process the file (same logic as parse_file)
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided.")
+    return [
+        {
+            "id": 1,
+            "type": "summary",
+            "title": "Computer Networks Module 1",
+            "date": "2024-01-04T10:30:00",
+            "status": "completed"
+        },
+        {
+            "id": 2,
+            "type": "question_paper",
+            "title": "CAT-1 Practice Paper",
+            "date": "2024-01-03T14:15:00",
+            "status": "completed"
+        },
+        {
+            "id": 3,
+            "type": "summary",
+            "title": "Operating Systems Notes",
+            "date": "2024-01-02T09:00:00",
+            "status": "completed"
+        }
+    ]
 
-        file_ext = file.filename.lower().split('.')[-1]
-        allowed_extensions = ['pdf', 'docx', 'pptx', 'txt']
-        if file_ext not in allowed_extensions:
-            raise HTTPException(status_code=400, detail=f"Unsupported file type. Allowed: {', '.join(allowed_extensions)}")
-
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
-            content = await file.read()
-            if len(content) > settings.MAX_FILE_SIZE:
-                raise HTTPException(status_code=413, detail=f"File too large. Max size: {settings.max_file_size_mb}MB")
-            temp_file.write(content)
-            temp_path = temp_file.name
-
-        try:
-            # Extract text from file
-            text_content = await _extract_text_from_file(temp_path, file.filename)
-
-            if not text_content or not _is_plausible_text(text_content):
-                raise HTTPException(status_code=422, detail="Could not extract meaningful content from the file.")
-
-            if len(text_content) > settings.max_content_length:
-                text_content = text_content[:settings.max_content_length]
-
-            # Process with unified agent
-            parse_request = NotesParseRequest(
-                content=text_content,
-                extract_keywords=extract_keywords,
-                extract_concepts=extract_concepts,
-                extract_questions=extract_questions
-            )
-            result = await academic_agent.parse_and_summarize(parse_request)
-            
-            if not result.success:
-                raise HTTPException(status_code=500, detail=result.message)
-            
-            # Generate PDF
-            pdf_content = pdf_exporter.export_parse_results(result, file.filename)
-            filename = pdf_exporter.generate_filename(file.filename.split('.')[0], "parse")
-            
-            return Response(
-                content=pdf_content,
-                media_type="application/pdf",
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
-                    "Content-Length": str(len(pdf_content))
-                }
-            )
-
-        finally:
-            if 'temp_path' in locals() and os.path.exists(temp_path):
-                os.unlink(temp_path)
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"File parsing and PDF export failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")
-
-
-@router.post("/summarize/export-pdf")
-async def export_summary_results_to_pdf(request: SummarizeRequest):
-    """
-    Summarize content and export results to a formatted PDF report.
-    
-    Returns a downloadable PDF containing:
-    - Summary content
-    - Key points extracted from summary
-    - Processing statistics and metadata
-    """
-    try:
-        # Get summarization results
-        result = await academic_agent.summarize_only(request)
-        
-        if not result.success:
-            raise HTTPException(status_code=500, detail=result.message)
-        
-        # Generate PDF
-        pdf_content = pdf_exporter.export_summary_results(result)
-        filename = pdf_exporter.generate_filename("content_summary", "summary")
-        
-        return Response(
-            content=pdf_content,
-            media_type="application/pdf",
-            headers={
-                "Content-Disposition": f"attachment; filename={filename}",
-                "Content-Length": str(len(pdf_content))
-            }
-        )
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Summary PDF export failed: {e}")
-        raise HTTPException(status_code=500, detail=f"PDF export failed: {str(e)}")
-
-
-@router.post("/summarize-file/export-pdf")
-async def export_summary_file_results_to_pdf(
-    file: UploadFile = File(...),
-    summary_type: str = "comprehensive",
-    max_length: int = 500,
-    focus_areas: Optional[List[str]] = None
-):
-    """
-    Summarize uploaded file and export results to a formatted PDF report.
-    
-    Combines file processing with PDF generation for a complete workflow.
-    """
-    try:
-        # Process file (same logic as summarize_file)
-        if not file.filename:
-            raise HTTPException(status_code=400, detail="No file provided")
-        
-        file_content = await file.read()
-        if len(file_content) > settings.MAX_FILE_SIZE:
-            raise HTTPException(status_code=413, detail="File too large")
-        
-        allowed_extensions = ['pdf', 'docx', 'pptx', 'txt', 'md']
-        file_ext = file.filename.lower().split('.')[-1]
-        if file_ext not in allowed_extensions:
-            raise HTTPException(status_code=400, detail="Unsupported file type")
-        
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file_ext}") as temp_file:
-            temp_file.write(file_content)
-            temp_path = temp_file.name
-        
-        try:
-            # Extract text
-            if file_ext in ['txt', 'md']:
-                text_content = file_content.decode('utf-8')
-            else:
-                text_content = await _extract_text_from_file(temp_path, file.filename)
-            
-            if not text_content or len(text_content.strip()) < 10:
-                raise HTTPException(status_code=422, detail="No meaningful text extracted")
-            
-            if len(text_content) > settings.max_content_length:
-                text_content = text_content[:settings.max_content_length]
-            
-            # Summarize
-            request = SummarizeRequest(
-                content=text_content,
-                summary_type=summary_type,
-                max_length=max_length,
-                focus_areas=focus_areas or []
-            )
-            
-            result = await academic_agent.summarize_only(request)
-            
-            if not result.success:
-                raise HTTPException(status_code=500, detail=result.message)
-            
-            # Generate PDF
-            pdf_content = pdf_exporter.export_summary_results(result, file.filename)
-            filename = pdf_exporter.generate_filename(file.filename.split('.')[0], "summary")
-            
-            return Response(
-                content=pdf_content,
-                media_type="application/pdf",
-                headers={
-                    "Content-Disposition": f"attachment; filename={filename}",
-                    "Content-Length": str(len(pdf_content))
-                }
-            )
-            
-        finally:
-            try:
-                os.unlink(temp_path)
-            except:
-                pass
-                
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"File summary PDF export failed: {e}")
-        raise HTTPException(status_code=500, detail=f"Processing failed: {str(e)}")

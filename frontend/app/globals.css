@@ -1,0 +1,82 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+  --background: 180 22% 97%; /* F1F7F7 - clean light mode bg */
+  --foreground: 180 9% 20%;  /* 6E7E7D - soft dark text */
+  --card: 180 22% 96%;
+  --card-foreground: 180 9% 20%;
+  --popover: 180 22% 96%;
+  --popover-foreground: 180 9% 20%;
+
+  --primary: 158 64% 38%;    /* #2CC197 - richer green contrast */
+  --primary-foreground: 180 22% 97%;
+
+  --secondary: 180 20% 92%;
+  --secondary-foreground: 180 9% 20%;
+
+  --muted: 180 20% 92%;
+  --muted-foreground: 175 12% 45%;
+
+  --accent: 158 52% 36%;     /*  deeper accent green */
+  --accent-foreground: 180 22% 97%;
+
+  --destructive: 0 74% 52%;
+  --destructive-foreground: 180 22% 97%;
+
+  --border: 180 16% 85%;
+  --input: 180 16% 85%;
+  --ring: 158 64% 38%;       /*  ring highlight */
+  --radius: 0.5rem;
+}
+
+
+  .dark {
+ /* Background / Text */
+--background: 180 10% 3%;         /*  near-black with teal tint */
+--foreground: 180 15% 95%;        /* light gray text */
+
+/* Cards / Surfaces */
+--card: 165 15% 7%;               /* dark charcoal green */
+--card-foreground: 180 15% 95%;
+--popover: 165 15% 7%;            /* dark surface */
+--popover-foreground: 180 15% 95%;
+
+/* Primary / Action (green) */
+--primary: 150 80% 45%;           /* emerald green */
+--primary-foreground: 180 10% 98%; /* white for button text */
+
+/* Secondary / Muted */
+--secondary: 165 20% 18%;         /* deep muted green */
+--secondary-foreground: 180 15% 90%;
+
+--muted: 165 20% 18%;
+--muted-foreground: 175 10% 65%;  /* softer gray for muted text */
+
+/* Accent / Highlights */
+--accent: 150 85% 50%;            /* neon green highlight */
+--accent-foreground: 180 10% 98%;
+
+/* Alerts */
+--destructive: 0 72% 45%;         /* strong red */
+--destructive-foreground: 180 15% 95%;
+
+/* Borders / Inputs */
+--border: 165 15% 20%;            /* darker neutral border */
+--input: 165 15% 20%;
+--ring: 150 90% 55%;              /* glowing green for focus rings */
+
+}
+
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}

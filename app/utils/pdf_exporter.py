@@ -16,7 +16,10 @@ from reportlab.platypus import PageBreak, KeepTogether
 from reportlab.lib.enums import TA_LEFT, TA_CENTER, TA_JUSTIFY
 import structlog
 
-from app.models import NotesParseResponse, SummaryResponse, KeywordExtraction, ConceptExtraction, StudyQuestion
+from app.models import (
+    NotesParseResponse, SummaryResponse, KeywordExtraction, ConceptExtraction, StudyQuestion,
+    GeneratedQuestionPaper, Question, QuestionPart
+)
 
 logger = structlog.get_logger()
 
@@ -322,6 +325,139 @@ class PDFExporter:
                 elements.append(Paragraph(f"Suggested Answer: {question.suggested_answer}", self.styles['Normal']))
             
             elements.append(Spacer(1, 8))
+        
+        return KeepTogether(elements)
+    
+    def export_question_paper(self, question_paper: GeneratedQuestionPaper, original_filename: str = None) -> bytes:
+        """Export generated question paper to formatted PDF"""
+        
+        buffer = io.BytesIO()
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=72,
+            leftMargin=72,
+            topMargin=72,
+            bottomMargin=18
+        )
+        
+        story = []
+        
+        # Header section
+        story.append(Paragraph(question_paper.metadata.title, self.styles['CustomTitle']))
+        story.append(Spacer(1, 20))
+        
+        # Test information table
+        # Format test type properly (remove TestType prefix if present)
+        test_type_str = str(question_paper.metadata.test_type)
+        if hasattr(question_paper.metadata.test_type, 'value'):
+            test_type_str = question_paper.metadata.test_type.value
+        
+        # Extract subject name from filename if provided
+        subject_name = "Unknown Subject"
+        if original_filename:
+            # Remove file extension and clean up filename to get subject name
+            subject_name = os.path.splitext(original_filename)[0]
+            # Replace underscores and hyphens with spaces, title case
+            subject_name = re.sub(r'[_\-]', ' ', subject_name).title()
+        
+        test_info_data = [
+            ["Subject:", subject_name],
+            ["Test Type:", test_type_str],
+            ["Total Marks:", str(question_paper.metadata.total_marks)],
+            ["Number of Questions:", str(len(question_paper.paper))],
+            ["Modules Covered:", ", ".join(question_paper.metadata.modules)],
+            ["Date:", datetime.now().strftime("%Y-%m-%d")]
+        ]
+        
+        test_info_table = Table(test_info_data, colWidths=[2*inch, 4*inch])
+        test_info_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (0, -1), HexColor('#ECF0F1')),
+            ('TEXTCOLOR', (0, 0), (-1, -1), black),
+            ('ALIGN', (0, 0), (-1, -1), 'LEFT'),
+            ('FONTNAME', (0, 0), (0, -1), 'Helvetica-Bold'),
+            ('FONTNAME', (1, 0), (1, -1), 'Helvetica'),
+            ('FONTSIZE', (0, 0), (-1, -1), 10),
+            ('GRID', (0, 0), (-1, -1), 1, HexColor('#BDC3C7'))
+        ]))
+        
+        story.append(test_info_table)
+        story.append(Spacer(1, 30))
+        
+        # Instructions
+        story.append(Paragraph("INSTRUCTIONS:", self.styles['SectionHeader']))
+        instructions = [
+            "• Answer ALL questions.",
+            f"• Total marks: {question_paper.metadata.total_marks}",
+            f"• Each question carries equal marks unless specified.",
+            "• Write your answers clearly and legibly.",
+            "• Show all working where applicable."
+        ]
+        
+        for instruction in instructions:
+            story.append(Paragraph(instruction, self.styles['BulletPoint']))
+        
+        story.append(Spacer(1, 20))
+        story.append(Paragraph("QUESTIONS:", self.styles['SectionHeader']))
+        story.append(Spacer(1, 15))
+        
+        # Questions
+        for question in question_paper.paper:
+            story.append(self._create_question_section(question))
+            story.append(Spacer(1, 20))
+        
+        # Footer with validation info
+        if question_paper.metadata.notes:
+            story.append(Spacer(1, 30))
+            story.append(Paragraph("Notes:", self.styles['SubsectionHeader']))
+            story.append(Paragraph(question_paper.metadata.notes, self.styles['Metadata']))
+        
+        doc.build(story)
+        buffer.seek(0)
+        return buffer.read()
+    
+    def _create_question_section(self, question: Question):
+        """Create a formatted section for a single question"""
+        elements = []
+        
+        # Question header
+        if len(question.parts) == 1 and not question.parts[0].label:
+            # Single part question
+            header_text = f"Q{question.q_no}. [{question.marks} Marks]"
+            elements.append(Paragraph(header_text, self.styles['SubsectionHeader']))
+            elements.append(Spacer(1, 8))
+            
+            # Question text
+            elements.append(Paragraph(question.parts[0].text, self.styles['Normal']))
+            
+            # Module info
+            if question.parts[0].module:
+                module_text = f"Module(s): {', '.join(question.parts[0].module)}"
+                elements.append(Paragraph(module_text, self.styles['Metadata']))
+        
+        else:
+            # Multi-part question
+            header_text = f"Q{question.q_no}. [{question.marks} Marks]"
+            elements.append(Paragraph(header_text, self.styles['SubsectionHeader']))
+            elements.append(Spacer(1, 8))
+            
+            for part in question.parts:
+                if part.label:
+                    part_header = f"{part.label}) [{part.marks} Marks]"
+                    elements.append(Paragraph(part_header, self.styles['Normal']))
+                
+                elements.append(Paragraph(part.text, self.styles['Normal']))
+                
+                # Module info for this part
+                if part.module:
+                    module_text = f"Module(s): {', '.join(part.module)}"
+                    elements.append(Paragraph(module_text, self.styles['Metadata']))
+                
+                elements.append(Spacer(1, 5))
+        
+        # Special instructions
+        if question.instructions:
+            elements.append(Paragraph(f"Instructions: {question.instructions}", self.styles['Metadata']))
         
         return KeepTogether(elements)
     

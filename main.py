@@ -59,14 +59,10 @@ async def root():
         "version": "1.0.0",
         "description": "AI-powered academic assistant with notes parsing and summarization",
         "endpoints": {
-            "parse_text": "/parse",
-            "parse_file": "/parse-file", 
-            "summarize_text": "/summarize",
-            "summarize_file": "/summarize-file",
-            "export_parse_pdf": "/parse/export-pdf",
-            "export_parse_file_pdf": "/parse-file/export-pdf",
-            "export_summary_pdf": "/summarize/export-pdf", 
-            "export_summary_file_pdf": "/summarize-file/export-pdf",
+            "generate_summary": "/generate-summary",
+            "generate_question_paper": "/generate-question-paper",
+            "export_pdf": "/export-pdf",
+            "question_generation_options": "/question-generation-options",
             "health": "/health",
             "docs": "/docs"
         }
@@ -86,7 +82,8 @@ async def health_check():
         agents_status = {
             "ollama": ollama_status,
             "openai": openai_status,
-            "academic_agent": "healthy"
+            "academic_agent": "healthy",
+            "question_generator": "healthy"
         }
         
         overall_status = "healthy" if all(status == "healthy" for status in agents_status.values()) else "degraded"
