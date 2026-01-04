@@ -76,3 +76,7 @@ coverage.xml
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# Generated Files
+*.pdf
+*.log
