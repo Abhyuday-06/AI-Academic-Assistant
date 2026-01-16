@@ -10,18 +10,32 @@ logger = structlog.get_logger()
 class OpenAIClient:
     """OpenAI client wrapper for the application"""
     
-    def __init__(self):
-        self.client = openai.AsyncOpenAI(api_key=settings.openai_api_key)
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None, default_model: str = "gpt-3.5-turbo"):
+        self.api_key = api_key or settings.openai_api_key
+        self.default_model = default_model
+        # OpenRouter (and others) compatible instantiation
+        self.client = openai.AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=base_url
+        )
     
     async def generate_completion(
         self,
         prompt: str,
-        model: str = "gpt-3.5-turbo",
+        model: Optional[str] = None,
         max_tokens: int = 1000,
         temperature: float = 0.7,
         system_message: Optional[str] = None
     ) -> str:
         """Generate completion using OpenAI API"""
+        model_to_use = model or self.default_model
+        
+        # Log which model is being used
+        logger.info(f"Generating completion using model: {model_to_use}")
+        print(f"\n[DEBUG] Generative AI Request Started")
+        print(f"[DEBUG] Provider URL: {self.client.base_url}")
+        print(f"[DEBUG] Model: {model_to_use}")
+        
         try:
             messages = []
             
@@ -31,16 +45,18 @@ class OpenAIClient:
             messages.append({"role": "user", "content": prompt})
             
             response = await self.client.chat.completions.create(
-                model=model,
+                model=model_to_use,
                 messages=messages,
                 max_tokens=max_tokens,
                 temperature=temperature
             )
             
+            print(f"[DEBUG] Request Successful")
             return response.choices[0].message.content.strip()
             
         except Exception as e:
-            logger.error("OpenAI API error", error=str(e))
+            print(f"[DEBUG] Request Failed: {str(e)}")
+            logger.error(f"OpenAI API error with model {model_to_use}", error=str(e))
             raise Exception(f"OpenAI API error: {str(e)}")
     
     async def parse_notes_with_openai(self, content: str, extract_keywords: bool = True, 

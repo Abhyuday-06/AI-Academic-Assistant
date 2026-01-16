@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings
+from pydantic import Field
 from typing import Optional
 
 
@@ -8,8 +9,14 @@ class Settings(BaseSettings):
     # OpenAI Configuration
     openai_api_key: str
     
+    # OpenRouter Configuration
+    # Maps to OPENROUTER_API in .env
+    openrouter_api_key: Optional[str] = Field(None, validation_alias="OPENROUTER_API")
+    openrouter_base_url: str = "https://openrouter.ai/api/v1"
+    openrouter_model: str = "xiaomi/mimo-v2-flash:free"
+    
     # Ollama Configuration
-    ollama_base_url: str = "http://localhost:11434"
+    ollama_base_url: str = "http://localhost:11434/v1"
     ollama_model: str = "mistral:7b"
     
     # FastAPI Configuration

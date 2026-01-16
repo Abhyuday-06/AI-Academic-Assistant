@@ -1,4 +1,4 @@
-# AI Academic Assistant
+put# AI Academic Assistant
 
 A powerful **FastAPI-based AI assistant** specifically designed for academic content processing, featuring a **unified agent system**, advanced **OCR for handwritten notes**, intelligent text extraction, comprehensive analysis, **professional PDF report generation**, and a **modern Next.js frontend**.
 
@@ -97,8 +97,12 @@ pnpm install
 ### 3. Environment Configuration
 Create a `.env` file in the root directory with your configuration:
 ```env
-# Ollama Configuration (primary)
-OLLAMA_BASE_URL=http://localhost:11434
+# OpenRouter Configuration (Primary)
+OPENROUTER_API=your_openrouter_api_key_here
+OPENROUTER_MODEL=xiaomi/mimo-v2-flash:free
+
+# Ollama Configuration (Fallback)
+OLLAMA_BASE_URL=http://localhost:11434/v1
 OLLAMA_MODEL=mistral:7b
 
 # Application Settings
@@ -107,10 +111,9 @@ API_PORT=8000
 DEBUG=True
 SECRET_KEY=your_secret_key_here
 LOG_LEVEL=INFO
-
-# Optional: OpenAI Configuration (for fallback)
-OPENAI_API_KEY=your_openai_api_key_here
 ```
+
+**Note:** You can get a free OpenRouter API key from [OpenRouter Settings](https://openrouter.ai/settings/keys).
 
 ### 4. Setup Ollama & Dependencies
 ```bash

@@ -3,7 +3,7 @@ import re
 import json
 from typing import Dict, Any, List, Optional
 import structlog
-from app.utils.ollama_client import ollama_client
+from app.utils.hybrid_llm_client import hybrid_client
 from app.models import (
     NotesParseRequest, NotesParseResponse, SummarizeRequest, SummaryResponse,
     KeywordExtraction, ConceptExtraction, StudyQuestion
@@ -95,8 +95,8 @@ class AcademicAgent:
         original_length = len(request.content.split())
         
         try:
-            # Use Ollama to generate summary
-            result = await ollama_client.summarize_with_ollama(
+            # Use Hybrid Client (OpenRouter -> Ollama) to generate summary
+            result = await hybrid_client.summarize(
                 content=request.content,
                 summary_type=request.summary_type,
                 max_length=request.max_length,
@@ -136,9 +136,9 @@ class AcademicAgent:
             )
     
     async def _parse_with_ollama(self, request: NotesParseRequest) -> Dict[str, Any]:
-        """Parse content using Ollama and structure the response"""
-        # Call Ollama for parsing
-        raw_result = await ollama_client.parse_notes_with_ollama(
+        """Parse content using Hybrid Client and structure the response"""
+        # Call Hybrid Client for parsing
+        raw_result = await hybrid_client.parse_notes(
             content=request.content,
             extract_keywords=request.extract_keywords,
             extract_concepts=request.extract_concepts,
@@ -203,7 +203,7 @@ class AcademicAgent:
         prompt = "\n".join(prompt_parts)
         
         try:
-            response = await ollama_client.generate_completion(
+            response = await hybrid_client.generate_completion(
                 prompt=prompt,
                 system_message=system_message,
                 temperature=0.3,
